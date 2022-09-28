@@ -1317,11 +1317,11 @@ step_output_imap <- function(ps, out_dir){
           Database requires the columns: OTU, Root, Kingdom, Phylum, Class, Order, Family, Genus, Species ")
   }
   
-  if(any(str_detect(taxtab$Species, "/"), na.rm=TRUE)){
-    message("Warning: Taxonomy table contains taxa with clashes at the species level, these should be corrected before upload:")
-    clashes <- taxtab$Species[str_detect(taxtab$Species, "/")]
-    print(clashes[!is.na(clashes)])
-  }
+  #if(any(str_detect(taxtab$Species, "/"), na.rm=TRUE)){
+  #  message("Warning: Taxonomy table contains taxa with clashes at the species level, these should be corrected before upload:")
+  #  clashes <- taxtab$Species[str_detect(taxtab$Species, "/")]
+  #  print(clashes[!is.na(clashes)])
+  #}
   
   samdf <- sample_data(ps) %>%
     as("matrix") %>%
@@ -1413,3 +1413,52 @@ fastqc_install <- function (url, dest_dir = "bin", dest.dir = "bin", force = FAL
   utils::unzip(destfile, exdir = dest_dir)
   file.remove(destfile)
 }
+
+
+# Phyloseq utilities ------------------------------------------------------
+
+
+phyloseq_filter_sample_wise_abund_trim <- function(physeq, minabund = 10, relabund = FALSE, rm_zero_OTUs = TRUE){
+  
+  ## Censore OTU abundance
+  if(relabund == FALSE){     # trim based on absolute OTU counts
+    
+    res <- phyloseq::transform_sample_counts(physeq, function(OTU, ab = minabund){ ifelse(OTU <= ab,  0, OTU) })
+    
+  } else {                   # trim based on relative abundances within sample, but return original counts
+    
+    if(!minabund > 0 & minabund <= 1){
+      stop("Error: for relative abundance trimmin 'minabund' should be in (0,1] interval.\n")
+    }
+    
+    ## Convert data to relative abundances
+    res <- phyloseq_standardize_otu_abundance(physeq, method = "total")
+    
+    ## Remove relative abundances less than the threshold value
+    res <- phyloseq::transform_sample_counts(res, function(OTU, ab = minabund){ ifelse(OTU <= ab,  0, OTU) })
+    
+    ## Sample sums and data orientation
+    smps <- phyloseq::sample_sums(physeq)
+    if(phyloseq::taxa_are_rows(physeq) == TRUE){
+      mar <- 2
+    } else {
+      mar <- 1
+    }
+    
+    ## Convert back to counts by multiplying relative abundances by sample sums
+    phyloseq::otu_table(res) <- phyloseq::otu_table(
+      sweep(x = phyloseq::otu_table(res), MARGIN = mar, STATS = smps, FUN = `*`),
+      taxa_are_rows = phyloseq::taxa_are_rows(physeq))
+  }
+  
+  ## Remove zero-OTUs
+  if(rm_zero_OTUs == TRUE){
+    if (any(taxa_sums(res) > 0)){
+      res <- phyloseq::prune_taxa(taxa_sums(res) > 0, res)
+    } else {
+      res <- NULL
+    }
+  }
+  return(res)
+}
+
